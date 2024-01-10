@@ -1,9 +1,10 @@
 package com.linagora.tmail.james.app;
 
+import static org.apache.james.PostgresJamesConfiguration.EventBusImpl.IN_MEMORY;
+
 import org.apache.james.JamesServerBuilder;
 import org.apache.james.JamesServerConcreteContract;
 import org.apache.james.JamesServerExtension;
-import org.apache.james.PostgresJamesConfiguration;
 import org.apache.james.SearchConfiguration;
 import org.apache.james.backends.postgres.PostgresExtension;
 import org.apache.james.modules.blobstore.BlobStoreConfiguration;
@@ -14,8 +15,7 @@ import com.google.inject.multibindings.Multibinder;
 import com.linagora.tmail.combined.identity.UsersRepositoryClassProbe;
 import com.linagora.tmail.encrypted.MailboxConfiguration;
 import com.linagora.tmail.encrypted.MailboxManagerClassProbe;
-import com.linagora.tmail.module.LinagoraTestJMAPServerModule;
-import org.apache.james.DockerOpenSearchExtension;
+
 class PostgresTmailServerTest implements JamesServerConcreteContract {
     static PostgresExtension postgresExtension = PostgresExtension.empty();
 
@@ -29,16 +29,14 @@ class PostgresTmailServerTest implements JamesServerConcreteContract {
                 .disableCache()
                 .deduplication()
                 .noCryptoConfig())
-            .searchConfiguration(SearchConfiguration.openSearch())
+            .searchConfiguration(SearchConfiguration.scanning())
             .mailbox(new MailboxConfiguration(false))
-            .eventBusImpl(PostgresJamesConfiguration.EventBusImpl.IN_MEMORY)
+            .eventBusImpl(IN_MEMORY)
             .build())
         .server(configuration -> PostgresTmailServer.createServer(configuration)
-            .overrideWith(new LinagoraTestJMAPServerModule())
             .overrideWith(binder -> Multibinder.newSetBinder(binder, GuiceProbe.class).addBinding().to(MailboxManagerClassProbe.class))
             .overrideWith(binder -> Multibinder.newSetBinder(binder, GuiceProbe.class).addBinding().to(UsersRepositoryClassProbe.class)))
         .extension(postgresExtension)
-        .extension(new DockerOpenSearchExtension())
         .lifeCycle(JamesServerExtension.Lifecycle.PER_CLASS)
         .build();
 }
