@@ -1,20 +1,24 @@
 package com.linagora.tmail.james.jmap.method
 
+import java.net.URI
 import java.nio.charset.StandardCharsets
 import java.time.format.DateTimeFormatter
 import java.util.{Locale, UUID}
 
-import com.linagora.tmail.james.jmap.method.CalendarEventReplyPerformer.LANGUAGE_DEFAULT
+import com.linagora.tmail.james.jmap.method.CalendarEventReplyPerformer.{I18N_MAIL_TEMPLATE_LOCATION_PROPERTY, LANGUAGE_DEFAULT}
 import com.linagora.tmail.james.jmap.model.{AttendeeReply, CalendarEventNotParsable, CalendarEventParsed, CalendarEventReplyGenerator, CalendarEventReplyRequest, CalendarEventReplyResults, CalendarOrganizerField, CalendarStartField, CalendarTitleField, InvalidCalendarFileException}
 import eu.timepit.refined.auto._
+import jakarta.mail.BodyPart
 import javax.annotation.PreDestroy
 import javax.inject.Inject
 import net.fortuna.ical4j.model.Calendar
 import net.fortuna.ical4j.model.component.VEvent
 import net.fortuna.ical4j.model.parameter.PartStat
+import org.apache.commons.io.IOUtils
 import org.apache.james.core.MailAddress
 import org.apache.james.core.builder.MimeMessageBuilder
 import org.apache.james.core.builder.MimeMessageBuilder.BodyPartBuilder
+import org.apache.james.filesystem.api.FileSystem
 import org.apache.james.jmap.mail.{BlobId, BlobIds}
 import org.apache.james.jmap.method.EmailSubmissionSetMethod.LOGGER
 import org.apache.james.jmap.routes.{BlobNotFoundException, BlobResolvers}
@@ -22,7 +26,9 @@ import org.apache.james.lifecycle.api.{LifecycleUtil, Startable}
 import org.apache.james.mailbox.MailboxSession
 import org.apache.james.queue.api.MailQueueFactory.SPOOL
 import org.apache.james.queue.api.{MailQueue, MailQueueFactory}
-import org.apache.james.server.core.MailImpl
+import org.apache.james.server.core.{MailImpl, MissingArgumentException}
+import org.apache.james.util.MimeMessageUtil
+import org.apache.james.utils.PropertiesProvider
 import org.apache.mailet.Mail
 import reactor.core.scala.publisher.{SFlux, SMono}
 import reactor.core.scheduler.Schedulers
@@ -30,13 +36,23 @@ import reactor.core.scheduler.Schedulers
 import scala.jdk.CollectionConverters.CollectionHasAsScala
 import scala.util.{Failure, Success, Try, Using}
 
+
 object CalendarEventReplyPerformer {
   val LANGUAGE_DEFAULT: Locale = Locale.ENGLISH
+  val I18N_MAIL_TEMPLATE_LOCATION_PROPERTY : String = "jmap.calendar_event.reply.i18n.location"
 }
 
 class CalendarEventReplyPerformer @Inject()(blobCalendarResolver: BlobCalendarResolver,
-                                            mailQueueFactory: MailQueueFactory[_ <: MailQueue]) extends Startable {
-  private val mailReplyGenerator: CalendarEventMailReplyGenerator = new CalendarEventMailReplyGenerator(new FakeMailCalendarEventReplyContent)
+                                            mailQueueFactory: MailQueueFactory[_ <: MailQueue],
+                                            fileSystem: FileSystem,
+                                            propertiesProvider: PropertiesProvider) extends Startable {
+
+  private val mailReplyGenerator: CalendarEventMailReplyGenerator = Try(propertiesProvider.getConfiguration("jmap"))
+    .map(configuration => configuration.getString(I18N_MAIL_TEMPLATE_LOCATION_PROPERTY))
+    .map(i18nEmlDirectory => new I18NMailCalendarEventReplyContent(fileSystem, i18nEmlDirectory)) match {
+    case Success(value) => new CalendarEventMailReplyGenerator(value)
+    case Failure(_) => throw new MissingArgumentException("JMAP CalendarEvent needs a " + I18N_MAIL_TEMPLATE_LOCATION_PROPERTY + " entry")
+  }
 
   var queue: MailQueue = _
 
@@ -111,7 +127,7 @@ class CalendarEventMailReplyGenerator(val bodyPartContentGenerator: CalendarRepl
       .fold(e => SMono.error(e), recipient => generateAttachmentPart(calendarRequest, attendeeReply)
         .flatMap(attachmentPart => bodyPartContentGenerator.getBodyPartContent(language, attendeeReply, calendarRequest)
           .map(bodyPartContent => MimeMessageBuilder.mimeMessageBuilder
-            .setMultipartWithBodyParts(Seq(bodyPartContent.bodyPart).concat(attachmentPart): _*)
+            .setMultipartWithBodyParts(Seq(bodyPartContent.bodyPart).concat(attachmentPart.map(_.build())): _*)
             .setSubject(bodyPartContent.subject)
             .build))
         .map(mimeMessage => MailImpl.builder()
@@ -144,26 +160,44 @@ class CalendarEventMailReplyGenerator(val bodyPartContentGenerator: CalendarRepl
   private def generateMailName(): String = "calendar-reply-" + UUID.randomUUID().toString
 }
 
-case class ReplyBodyPart(subject: String, bodyPart: BodyPartBuilder)
+case class ReplyBodyPart(subject: String, bodyPart: BodyPart)
 
 trait CalendarReplyBodyPartContentGenerator {
   def getBodyPartContent(i18n: Locale, attendeeReply: AttendeeReply, calendar: Calendar): SMono[ReplyBodyPart]
 }
 
-class FakeMailCalendarEventReplyContent extends CalendarReplyBodyPartContentGenerator {
+class I18NMailCalendarEventReplyContent(fileSystem: FileSystem, i18nEmlDirectory: String) extends CalendarReplyBodyPartContentGenerator {
 
   val dateTimeFormatter: DateTimeFormatter = DateTimeFormatter.ofPattern("EEE MMM dd, yyyy")
+  private val ATTENDEE_TAG: String = "{{ATTENDEE}}"
 
   override def getBodyPartContent(i18n: Locale, attendeeReply: AttendeeReply, calendar: Calendar): SMono[ReplyBodyPart] = {
-    SMono.just(attendeeReply.attendee.asMailAddress().toString + " has " + attendeeReply.partStat.getValue.toLowerCase + " this invitation")
-      .map(MimeMessageBuilder.bodyPartBuilder.data(_))
-      .map(bodyPart => ReplyBodyPart(generateSubject(attendeeReply, calendar), bodyPart))
+    val emlFilename: String = evaluateMailTemplateFileName(attendeeReply.partStat, i18n)
+    val emlLocation: String = URI.create(i18nEmlDirectory).resolve(emlFilename).toString
+
+    SMono.fromCallable(() => fileSystem.getResource(emlLocation))
+      .map(IOUtils.toByteArray)
+      .map(MimeMessageUtil.mimeMessageFromBytes)
+      .map(mimeMessage => {
+        val bodyPart = mimeMessage.getContent match {
+          case textBody: String => MimeMessageBuilder.bodyPartBuilder.data(decorateEmailBody(textBody, attendeeReply)).build()
+          case _ => throw new IllegalArgumentException("The eml file must contain a text body.")
+        }
+        ReplyBodyPart(generateSubject(attendeeReply, calendar, Option(mimeMessage.getSubject)), bodyPart)
+      })
   }
 
-  private def generateSubject(attendeeReply: AttendeeReply, calendar: Calendar): String = {
+  private def generateSubject(attendeeReply: AttendeeReply, calendar: Calendar, statPrefix: Option[String] = None): String = {
     val event: VEvent = calendar.getComponents[VEvent]("VEVENT").asScala.head
     val eventTitle: Option[CalendarTitleField] = CalendarTitleField.from(event)
     val startDate: Option[CalendarStartField] = CalendarStartField.from(event)
-    s"${attendeeReply.partStat.getValue}: " + eventTitle.map(_.value).getOrElse("") + startDate.map(sd => " @ " + sd.value.format(dateTimeFormatter)).getOrElse("") + " (" + attendeeReply.attendee.asMailAddress().toString + ")"
+    val finalStatPrefix = statPrefix.getOrElse(attendeeReply.partStat.getValue)
+    s"${finalStatPrefix} " + eventTitle.map(_.value).getOrElse("") + startDate.map(sd => " @ " + sd.value.format(dateTimeFormatter)).getOrElse("") + " (" + attendeeReply.attendee.asMailAddress().toString + ")"
   }
+
+  private def evaluateMailTemplateFileName(partStat: PartStat, language: Locale): String =
+    s"calendar_reply_${partStat.getValue.toLowerCase}-${language.toLanguageTag}.eml"
+
+  private def decorateEmailBody(emlContent: String, attendeeReply: AttendeeReply): String =
+    emlContent.replace(ATTENDEE_TAG, attendeeReply.attendee.asMailAddress().toString)
 }
