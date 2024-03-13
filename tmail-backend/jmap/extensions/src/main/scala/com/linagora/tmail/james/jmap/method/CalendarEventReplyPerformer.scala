@@ -135,12 +135,12 @@ class CalendarEventReplySupportedLanguage @Inject()(propertiesProvider: Properti
   }
 
   private def getSupportedLanguagesConfiguration: Set[Locale] =
-    Some(propertiesProvider.getConfiguration("jmap"))
+    Try(propertiesProvider.getConfiguration("jmap"))
       .map(configuration => configuration.getStringArray(CalendarEventReplyPerformer.SUPPORTED_LANGUAGES_PROPERTY).toSet)
       .map(_.map(lgTag => LanguageLocation.detectLocale(lgTag) match {
         case Success(value) => value
         case Failure(error) => throw new MissingArgumentException("Invalid language tag in the configuration file." + error.getMessage)
-      })).getOrElse(Set.empty)
+      })).fold(_ => Set.empty, identity)
 
   def value: Set[Locale] = supportedLanguages
 
