@@ -1,5 +1,5 @@
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
-Subject: Diminué:
+Subject: Décliné: {{EVENT_TITLE}} @ {{EVENT_START_DATE}} ({{ATTENDEE}})
 
 {{ATTENDEE}} a décliné cette invitation.

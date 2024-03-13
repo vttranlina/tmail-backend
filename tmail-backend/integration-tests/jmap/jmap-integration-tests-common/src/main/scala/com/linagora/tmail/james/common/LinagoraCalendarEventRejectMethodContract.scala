@@ -809,7 +809,7 @@ trait LinagoraCalendarEventRejectMethodContract {
         .inPath("methodResponses[1][1].list[0]")
         .isEqualTo(
           s"""{
-             |    "subject": "DiminuÃ©: Simple event @ Fri Feb 23, 2024 (bob@domain.tld)",
+             |    "subject": "DÃ©clinÃ©: Simple event @ Fri Feb 23, 2024 (bob@domain.tld)",
              |    "preview": "bob@domain.tld a décliné cette invitation.",
              |    "id": "$${json-unit.ignore}",
              |    "hasAttachment": true,

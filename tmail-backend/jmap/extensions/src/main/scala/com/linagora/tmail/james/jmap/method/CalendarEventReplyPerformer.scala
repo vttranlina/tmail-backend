@@ -1,20 +1,23 @@
 package com.linagora.tmail.james.jmap.method
 
+import java.io.{FileNotFoundException, StringReader, StringWriter}
 import java.net.URI
 import java.nio.charset.StandardCharsets
 import java.time.format.DateTimeFormatter
-import java.util.{Locale, UUID}
+import java.util.{Locale, UUID, Map => JavaMap}
 
+import com.github.mustachejava.DefaultMustacheFactory
+import com.google.common.collect.ImmutableMap
 import com.linagora.tmail.james.jmap.method.CalendarEventReplyPerformer.{I18N_MAIL_TEMPLATE_LOCATION_PROPERTY, LANGUAGE_DEFAULT}
-import com.linagora.tmail.james.jmap.model.{AttendeeReply, CalendarEventNotParsable, CalendarEventParsed, CalendarEventReplyGenerator, CalendarEventReplyRequest, CalendarEventReplyResults, CalendarOrganizerField, CalendarStartField, CalendarTitleField, InvalidCalendarFileException}
+import com.linagora.tmail.james.jmap.model.{AttendeeReply, CalendarEndField, CalendarEventNotParsable, CalendarEventParsed, CalendarEventReplyGenerator, CalendarEventReplyRequest, CalendarEventReplyResults, CalendarLocationField, CalendarOrganizerField, CalendarStartField, CalendarTitleField, InvalidCalendarFileException}
 import eu.timepit.refined.auto._
-import jakarta.mail.BodyPart
+import jakarta.mail.Part
+import jakarta.mail.internet.{MimeMessage, MimeMultipart}
 import javax.annotation.PreDestroy
 import javax.inject.Inject
 import net.fortuna.ical4j.model.Calendar
 import net.fortuna.ical4j.model.component.VEvent
 import net.fortuna.ical4j.model.parameter.PartStat
-import org.apache.commons.io.IOUtils
 import org.apache.james.core.MailAddress
 import org.apache.james.core.builder.MimeMessageBuilder
 import org.apache.james.core.builder.MimeMessageBuilder.BodyPartBuilder
@@ -26,8 +29,7 @@ import org.apache.james.lifecycle.api.{LifecycleUtil, Startable}
 import org.apache.james.mailbox.MailboxSession
 import org.apache.james.queue.api.MailQueueFactory.SPOOL
 import org.apache.james.queue.api.{MailQueue, MailQueueFactory}
-import org.apache.james.server.core.{MailImpl, MissingArgumentException}
-import org.apache.james.util.MimeMessageUtil
+import org.apache.james.server.core.{MailImpl, MimeMessageInputStreamSource, MimeMessageWrapper, MissingArgumentException}
 import org.apache.james.utils.PropertiesProvider
 import org.apache.mailet.Mail
 import reactor.core.scala.publisher.{SFlux, SMono}
@@ -49,7 +51,7 @@ class CalendarEventReplyPerformer @Inject()(blobCalendarResolver: BlobCalendarRe
 
   private val mailReplyGenerator: CalendarEventMailReplyGenerator = Try(propertiesProvider.getConfiguration("jmap"))
     .map(configuration => configuration.getString(I18N_MAIL_TEMPLATE_LOCATION_PROPERTY))
-    .map(i18nEmlDirectory => new I18NMailCalendarEventReplyContent(fileSystem, i18nEmlDirectory)) match {
+    .map(i18nEmlDirectory => new I18NCalendarEventReplyMessageGenerator(fileSystem, i18nEmlDirectory)) match {
     case Success(value) => new CalendarEventMailReplyGenerator(value)
     case Failure(_) => throw new MissingArgumentException("JMAP CalendarEvent needs a " + I18N_MAIL_TEMPLATE_LOCATION_PROPERTY + " entry")
   }
@@ -118,18 +120,15 @@ class BlobCalendarResolver @Inject()(blobResolvers: BlobResolvers) {
     }
 }
 
-class CalendarEventMailReplyGenerator(val bodyPartContentGenerator: CalendarReplyBodyPartContentGenerator) {
+class CalendarEventMailReplyGenerator(val bodyPartContentGenerator: CalendarReplyMessageGenerator) {
 
   private val ICS_FILE_NAME: String = "invite.ics"
 
   def generateMail(calendarRequest: Calendar, attendeeReply: AttendeeReply, language: Locale): SMono[Mail] =
     extractRecipient(calendarRequest)
       .fold(e => SMono.error(e), recipient => generateAttachmentPart(calendarRequest, attendeeReply)
-        .flatMap(attachmentPart => bodyPartContentGenerator.getBodyPartContent(language, attendeeReply, calendarRequest)
-          .map(bodyPartContent => MimeMessageBuilder.mimeMessageBuilder
-            .setMultipartWithBodyParts(Seq(bodyPartContent.bodyPart).concat(attachmentPart.map(_.build())): _*)
-            .setSubject(bodyPartContent.subject)
-            .build))
+        .flatMap(attachmentPart => bodyPartContentGenerator.getBasedMimeMessage(language, attendeeReply, calendarRequest)
+          .map(decoratedMimeMessage => appendAttachmentPartToMail(attachmentPart, decoratedMimeMessage)))
         .map(mimeMessage => MailImpl.builder()
           .name(generateMailName())
           .sender(attendeeReply.attendee.asString())
@@ -158,46 +157,119 @@ class CalendarEventMailReplyGenerator(val bodyPartContentGenerator: CalendarRepl
     }
 
   private def generateMailName(): String = "calendar-reply-" + UUID.randomUUID().toString
+
+  private def appendAttachmentPartToMail(attachmentPart: Seq[BodyPartBuilder], mimeMessage: MimeMessage): MimeMessage = {
+    mimeMessage.getContent match {
+      case mimeMultipart: MimeMultipart =>
+        attachmentPart.foreach(part => mimeMultipart.addBodyPart(part.build))
+        mimeMessage.setContent(mimeMultipart)
+      case singleTextPart: String =>
+        val mimeMultipart = new MimeMultipart
+        val textBodyPart = MimeMessageBuilder.bodyPartBuilder.data(singleTextPart).build()
+        mimeMultipart.addBodyPart(textBodyPart)
+        attachmentPart.foreach(part => mimeMultipart.addBodyPart(part.build))
+        mimeMessage.setContent(mimeMultipart)
+      case _ => throw new IllegalArgumentException("The eml file must contain a text body.")
+    }
+    mimeMessage.saveChanges()
+    mimeMessage
+  }
 }
 
-case class ReplyBodyPart(subject: String, bodyPart: BodyPart)
-
-trait CalendarReplyBodyPartContentGenerator {
-  def getBodyPartContent(i18n: Locale, attendeeReply: AttendeeReply, calendar: Calendar): SMono[ReplyBodyPart]
+trait CalendarReplyMessageGenerator {
+  def getBasedMimeMessage(i18n: Locale, attendeeReply: AttendeeReply, calendar: Calendar): SMono[MimeMessage]
 }
 
-class I18NMailCalendarEventReplyContent(fileSystem: FileSystem, i18nEmlDirectory: String) extends CalendarReplyBodyPartContentGenerator {
-
-  val dateTimeFormatter: DateTimeFormatter = DateTimeFormatter.ofPattern("EEE MMM dd, yyyy")
-  private val ATTENDEE_TAG: String = "{{ATTENDEE}}"
-
-  override def getBodyPartContent(i18n: Locale, attendeeReply: AttendeeReply, calendar: Calendar): SMono[ReplyBodyPart] = {
-    val emlFilename: String = evaluateMailTemplateFileName(attendeeReply.partStat, i18n)
-    val emlLocation: String = URI.create(i18nEmlDirectory).resolve(emlFilename).toString
-
-    SMono.fromCallable(() => fileSystem.getResource(emlLocation))
-      .map(IOUtils.toByteArray)
-      .map(MimeMessageUtil.mimeMessageFromBytes)
-      .map(mimeMessage => {
-        val bodyPart = mimeMessage.getContent match {
-          case textBody: String => MimeMessageBuilder.bodyPartBuilder.data(decorateEmailBody(textBody, attendeeReply)).build()
-          case _ => throw new IllegalArgumentException("The eml file must contain a text body.")
-        }
-        ReplyBodyPart(generateSubject(attendeeReply, calendar, Option(mimeMessage.getSubject)), bodyPart)
-      })
+private object I18NCalendarEventReplyMessageGenerator {
+  private object MUSTACHE {
+    val PART_STAT: String = "PART_STAT"
+    val ATTENDEE: String = "ATTENDEE"
+    val EVENT_ORGANIZER: String = "ORGANIZER"
+    val EVENT_TITLE: String = "EVENT_TITLE"
+    val EVENT_START_DATE: String = "EVENT_START_DATE"
+    val EVENT_END_DATE: String = "EVENT_END_DATE"
+    val EVENT_LOCATION: String = "EVENT_LOCATION"
   }
 
-  private def generateSubject(attendeeReply: AttendeeReply, calendar: Calendar, statPrefix: Option[String] = None): String = {
+  private val DATE_TIME_FORMATTER: DateTimeFormatter = DateTimeFormatter.ofPattern("EEE MMM dd, yyyy")
+}
+
+class I18NCalendarEventReplyMessageGenerator(fileSystem: FileSystem, i18nEmlDirectory: String) extends CalendarReplyMessageGenerator {
+
+  import I18NCalendarEventReplyMessageGenerator._
+
+  override def getBasedMimeMessage(i18n: Locale, attendeeReply: AttendeeReply, requestCalendar: Calendar): SMono[MimeMessage] =
+    getBasedMimeMessage(attendeeReply, requestCalendar, evaluateMailTemplateFileName(attendeeReply.partStat, i18n))
+
+  def getBasedMimeMessage(attendeeReply: AttendeeReply, calendar: Calendar, emlFilename: String): SMono[MimeMessage] =
+    SMono.fromCallable(() => URI.create(i18nEmlDirectory).resolve(emlFilename).toString)
+      .doOnNext(validateTemplateFile)
+      .map(emlLocation => new MimeMessageWrapper(MimeMessageInputStreamSource.create(MailImpl.getId, fileSystem.getResource(emlLocation))))
+      .map(mimeMessage => decoratedMimeMessage(mimeMessage, getMustacheDataMap(attendeeReply, calendar)))
+      .subscribeOn(Schedulers.boundedElastic())
+
+  private def decoratedMimeMessage(originalMimeMessage: MimeMessage, mustacheDataMap: JavaMap[String, String]): MimeMessage = {
+    originalMimeMessage.getContent match {
+      case textBody: String =>
+        val decoratedBody = decorateTextBodyMessage(textBody, mustacheDataMap)
+        originalMimeMessage.setContent(decoratedBody, originalMimeMessage.getContentType)
+      case mimeMultipart: MimeMultipart =>
+        val partNumber = mimeMultipart.getCount
+        for (i <- 0 until partNumber) {
+          val bodyPart = mimeMultipart.getBodyPart(i)
+          if (bodyPart.getDisposition == null || bodyPart.getDisposition.equalsIgnoreCase(Part.INLINE)) {
+            if (bodyPart.isMimeType("text/plain") || bodyPart.isMimeType("text/html")) {
+              val decoratedBody = decorateTextBodyMessage(bodyPart.getContent.asInstanceOf[String], mustacheDataMap)
+              bodyPart.setContent(decoratedBody, bodyPart.getContentType)
+            }
+          }
+        }
+      case _ => throw new IllegalArgumentException("The eml file must contain a text body.")
+    }
+    originalMimeMessage.setSubject(decorateSubjectMessage(originalMimeMessage.getSubject, mustacheDataMap))
+    originalMimeMessage.saveChanges()
+    originalMimeMessage
+  }
+
+  private def validateTemplateFile(emlLocation: String): Unit =
+    try {
+      fileSystem.getFile(emlLocation)
+    } catch {
+      case e: FileNotFoundException => throw new IllegalArgumentException("Cannot find the template eml file: " + emlLocation, e)
+      case e: Exception => throw new IllegalArgumentException("Cannot read the template eml file: " + emlLocation, e)
+    }
+
+  private def getMustacheDataMap(attendeeReply: AttendeeReply, calendar: Calendar): JavaMap[String, String] = {
     val event: VEvent = calendar.getComponents[VEvent]("VEVENT").asScala.head
     val eventTitle: Option[CalendarTitleField] = CalendarTitleField.from(event)
     val startDate: Option[CalendarStartField] = CalendarStartField.from(event)
-    val finalStatPrefix = statPrefix.getOrElse(attendeeReply.partStat.getValue)
-    s"${finalStatPrefix} " + eventTitle.map(_.value).getOrElse("") + startDate.map(sd => " @ " + sd.value.format(dateTimeFormatter)).getOrElse("") + " (" + attendeeReply.attendee.asMailAddress().toString + ")"
+    val endDate: Option[CalendarEndField] = CalendarEndField.from(event)
+    val location: Option[CalendarLocationField] = CalendarLocationField.from(event)
+    ImmutableMap.of(
+      MUSTACHE.PART_STAT, attendeeReply.partStat.getValue,
+      MUSTACHE.ATTENDEE, attendeeReply.attendee.asMailAddress().toString,
+      MUSTACHE.EVENT_ORGANIZER, CalendarOrganizerField.from(event).flatMap(_.mailto.map(_.asString())).getOrElse(""),
+      MUSTACHE.EVENT_TITLE, eventTitle.map(_.value).getOrElse(""),
+      MUSTACHE.EVENT_START_DATE, startDate.map(sd => sd.value.format(DATE_TIME_FORMATTER)).getOrElse(""),
+      MUSTACHE.EVENT_END_DATE, endDate.map(ed => ed.value.format(DATE_TIME_FORMATTER)).getOrElse(""),
+      MUSTACHE.EVENT_LOCATION, location.map(_.value).getOrElse(""))
   }
 
-  private def evaluateMailTemplateFileName(partStat: PartStat, language: Locale): String =
-    s"calendar_reply_${partStat.getValue.toLowerCase}-${language.toLanguageTag}.eml"
+  def evaluateMailTemplateFileName(partStat: PartStat, language: Locale): String =
+    s"calendar_reply_${partStat.getValue.toLowerCase}-${language.getLanguage}.eml"
 
-  private def decorateEmailBody(emlContent: String, attendeeReply: AttendeeReply): String =
-    emlContent.replace(ATTENDEE_TAG, attendeeReply.attendee.asMailAddress().toString)
+  private def decorateSubjectMessage(mustacheSubject: String, dataMap: JavaMap[String, String]): String =
+    replaceMustache(mustacheSubject, dataMap)
+
+  private def decorateTextBodyMessage(mustacheTextBody: String, dataMap: JavaMap[String, String]): String =
+    replaceMustache(mustacheTextBody, dataMap)
+
+  private def replaceMustache(input: String, dataMap: JavaMap[String, String]): String = {
+    val mf = new DefaultMustacheFactory
+    val mustache = mf.compile(new StringReader(input), "example")
+    val writer = new StringWriter
+    mustache.execute(writer, dataMap)
+    writer.flush()
+    writer.toString
+  }
 }
