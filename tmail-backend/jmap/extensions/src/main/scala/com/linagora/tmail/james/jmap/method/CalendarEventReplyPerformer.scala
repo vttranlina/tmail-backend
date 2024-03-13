@@ -15,10 +15,11 @@ import eu.timepit.refined.auto._
 import jakarta.mail.Part
 import jakarta.mail.internet.{MimeMessage, MimeMultipart}
 import javax.annotation.PreDestroy
-import javax.inject.Inject
+import javax.inject.{Inject, Named}
 import net.fortuna.ical4j.model.Calendar
 import net.fortuna.ical4j.model.component.VEvent
 import net.fortuna.ical4j.model.parameter.PartStat
+import org.apache.commons.configuration2.Configuration
 import org.apache.james.core.MailAddress
 import org.apache.james.core.builder.MimeMessageBuilder
 import org.apache.james.core.builder.MimeMessageBuilder.BodyPartBuilder
@@ -47,11 +48,10 @@ object CalendarEventReplyPerformer {
 class CalendarEventReplyPerformer @Inject()(blobCalendarResolver: BlobCalendarResolver,
                                             mailQueueFactory: MailQueueFactory[_ <: MailQueue],
                                             fileSystem: FileSystem,
-                                            propertiesProvider: PropertiesProvider,
+                                            @Named("jmap") jmapConfiguration: Configuration,
                                             supportedLanguage: CalendarEventReplySupportedLanguage) extends Startable {
 
-  private val mailReplyGenerator: CalendarEventMailReplyGenerator = Try(propertiesProvider.getConfiguration("jmap"))
-    .map(configuration => configuration.getString(I18N_MAIL_TEMPLATE_LOCATION_PROPERTY))
+  private val mailReplyGenerator: CalendarEventMailReplyGenerator = Try(jmapConfiguration.getString(I18N_MAIL_TEMPLATE_LOCATION_PROPERTY))
     .map(i18nEmlDirectory => new I18NCalendarEventReplyMessageGenerator(fileSystem, i18nEmlDirectory)) match {
     case Success(value) => new CalendarEventMailReplyGenerator(value)
     case Failure(_) => throw new MissingArgumentException("JMAP CalendarEvent needs a " + I18N_MAIL_TEMPLATE_LOCATION_PROPERTY + " entry")
