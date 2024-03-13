@@ -7,9 +7,10 @@ import java.time.format.DateTimeFormatter
 import java.util.{Locale, UUID, Map => JavaMap}
 
 import com.github.mustachejava.DefaultMustacheFactory
+import com.google.common.base.Preconditions
 import com.google.common.collect.ImmutableMap
-import com.linagora.tmail.james.jmap.method.CalendarEventReplyPerformer.{I18N_MAIL_TEMPLATE_LOCATION_PROPERTY, LANGUAGE_DEFAULT}
-import com.linagora.tmail.james.jmap.model.{AttendeeReply, CalendarEndField, CalendarEventNotParsable, CalendarEventParsed, CalendarEventReplyGenerator, CalendarEventReplyRequest, CalendarEventReplyResults, CalendarLocationField, CalendarOrganizerField, CalendarStartField, CalendarTitleField, InvalidCalendarFileException}
+import com.linagora.tmail.james.jmap.method.CalendarEventReplyPerformer.I18N_MAIL_TEMPLATE_LOCATION_PROPERTY
+import com.linagora.tmail.james.jmap.model.{AttendeeReply, CalendarEndField, CalendarEventNotParsable, CalendarEventParsed, CalendarEventReplyGenerator, CalendarEventReplyRequest, CalendarEventReplyResults, CalendarLocationField, CalendarOrganizerField, CalendarStartField, CalendarTitleField, InvalidCalendarFileException, LanguageLocation}
 import eu.timepit.refined.auto._
 import jakarta.mail.Part
 import jakarta.mail.internet.{MimeMessage, MimeMultipart}
@@ -38,16 +39,16 @@ import reactor.core.scheduler.Schedulers
 import scala.jdk.CollectionConverters.CollectionHasAsScala
 import scala.util.{Failure, Success, Try, Using}
 
-
 object CalendarEventReplyPerformer {
-  val LANGUAGE_DEFAULT: Locale = Locale.ENGLISH
-  val I18N_MAIL_TEMPLATE_LOCATION_PROPERTY : String = "jmap.calendar_event.reply.i18n.location"
+  val I18N_MAIL_TEMPLATE_LOCATION_PROPERTY: String = "calendarEvent.reply.mailTemplateLocation"
+  val SUPPORTED_LANGUAGES_PROPERTY: String = "calendarEvent.reply.supportedLanguages"
 }
 
 class CalendarEventReplyPerformer @Inject()(blobCalendarResolver: BlobCalendarResolver,
                                             mailQueueFactory: MailQueueFactory[_ <: MailQueue],
                                             fileSystem: FileSystem,
-                                            propertiesProvider: PropertiesProvider) extends Startable {
+                                            propertiesProvider: PropertiesProvider,
+                                            supportedLanguage: CalendarEventReplySupportedLanguage) extends Startable {
 
   private val mailReplyGenerator: CalendarEventMailReplyGenerator = Try(propertiesProvider.getConfiguration("jmap"))
     .map(configuration => configuration.getString(I18N_MAIL_TEMPLATE_LOCATION_PROPERTY))
@@ -67,6 +68,7 @@ class CalendarEventReplyPerformer @Inject()(blobCalendarResolver: BlobCalendarRe
   def process(request: CalendarEventReplyRequest, mailboxSession: MailboxSession, partStat: PartStat): SMono[CalendarEventReplyResults] = {
     val attendeeReply: AttendeeReply = AttendeeReply(mailboxSession.getUser, partStat)
     val language: Locale = getLanguageLocale(request)
+    Preconditions.checkArgument(supportedLanguage.isSupported(language), s"The language only supports ${supportedLanguage.value}".asInstanceOf[Object])
 
     SMono.fromCallable(() => extractParsedBlobIds(request))
       .flatMapMany { case (notParsable: CalendarEventNotParsable, parsedBlobId: Seq[BlobId]) =>
@@ -98,7 +100,8 @@ class CalendarEventReplyPerformer @Inject()(blobCalendarResolver: BlobCalendarRe
         case e => SMono.error(e)
       })
 
-  private def getLanguageLocale(request: CalendarEventReplyRequest): Locale = request.language.map(_.language).getOrElse(LANGUAGE_DEFAULT)
+  private def getLanguageLocale(request: CalendarEventReplyRequest): Locale =
+    request.language.map(_.language).getOrElse(CalendarEventReplySupportedLanguage.LANGUAGE_DEFAULT)
 }
 
 class BlobCalendarResolver @Inject()(blobResolvers: BlobResolvers) {
@@ -118,6 +121,32 @@ class BlobCalendarResolver @Inject()(blobResolvers: BlobResolvers) {
     } else {
       Right(calendar)
     }
+}
+
+private object CalendarEventReplySupportedLanguage {
+  val LANGUAGE_DEFAULT: Locale = Locale.ENGLISH
+}
+
+class CalendarEventReplySupportedLanguage @Inject()(propertiesProvider: PropertiesProvider) {
+
+  private val supportedLanguages: Set[Locale] = getSupportedLanguagesConfiguration match {
+    case supportedLanguages if supportedLanguages.isEmpty => Set(CalendarEventReplySupportedLanguage.LANGUAGE_DEFAULT)
+    case supportedLanguages => supportedLanguages
+  }
+
+  private def getSupportedLanguagesConfiguration: Set[Locale] =
+    Some(propertiesProvider.getConfiguration("jmap"))
+      .map(configuration => configuration.getStringArray(CalendarEventReplyPerformer.SUPPORTED_LANGUAGES_PROPERTY).toSet)
+      .map(_.map(lgTag => LanguageLocation.detectLocale(lgTag) match {
+        case Success(value) => value
+        case Failure(error) => throw new MissingArgumentException("Invalid language tag in the configuration file." + error.getMessage)
+      })).getOrElse(Set.empty)
+
+  def value: Set[Locale] = supportedLanguages
+
+  def valueAsStringSet: Set[String] = supportedLanguages.map(_.getLanguage)
+
+  def isSupported(language: Locale): Boolean = supportedLanguages.contains(language)
 }
 
 class CalendarEventMailReplyGenerator(val bodyPartContentGenerator: CalendarReplyMessageGenerator) {
