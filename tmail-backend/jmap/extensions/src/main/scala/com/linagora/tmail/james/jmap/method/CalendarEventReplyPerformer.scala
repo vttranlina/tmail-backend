@@ -237,7 +237,8 @@ class I18NCalendarEventReplyMessageGenerator(fileSystem: FileSystem, i18nEmlDire
       .map(mimeMessage => decoratedMimeMessage(mimeMessage, getMustacheDataMap(attendeeReply, calendar)))
       .subscribeOn(Schedulers.boundedElastic())
 
-  private def decoratedMimeMessage(originalMimeMessage: MimeMessage, mustacheDataMap: JavaMap[String, String]): MimeMessage = {
+  private def decoratedMimeMessage(originalMimeMessage: MimeMessageWrapper, mustacheDataMap: JavaMap[String, String]): MimeMessage = {
+    originalMimeMessage.loadMessage()
     originalMimeMessage.getContent match {
       case textBody: String =>
         val decoratedBody = decorateTextBodyMessage(textBody, mustacheDataMap)
@@ -264,8 +265,8 @@ class I18NCalendarEventReplyMessageGenerator(fileSystem: FileSystem, i18nEmlDire
     try {
       fileSystem.getFile(emlLocation)
     } catch {
-      case e: FileNotFoundException => throw new IllegalArgumentException("Cannot find the template eml file: " + emlLocation, e)
-      case e: Exception => throw new IllegalArgumentException("Cannot read the template eml file: " + emlLocation, e)
+      case e: FileNotFoundException => throw new IllegalArgumentException(s"Cannot find the template eml file: $emlLocation", e)
+      case e: Exception => throw new IllegalArgumentException(s"Cannot read the template eml file: $emlLocation", e)
     }
 
   private def getMustacheDataMap(attendeeReply: AttendeeReply, calendar: Calendar): JavaMap[String, String] = {
