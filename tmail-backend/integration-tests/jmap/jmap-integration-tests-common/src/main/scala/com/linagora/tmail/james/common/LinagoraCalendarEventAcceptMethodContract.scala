@@ -565,7 +565,7 @@ trait LinagoraCalendarEventAcceptMethodContract {
            |    "error",
            |    {
            |        "type": "invalidArguments",
-           |        "description": "The language only supports [fr, en]"
+           |        "description": "The language only supports [en, fr]"
            |    },
            |    "c1"
            |]""".stripMargin)
@@ -808,7 +808,7 @@ trait LinagoraCalendarEventAcceptMethodContract {
         .inPath("methodResponses[1][1].list[0]")
         .isEqualTo(
           s"""{
-             |    "subject": "ACCEPTÃ: Simple event @ Fri Feb 23, 2024 (bob@domain.tld)",
+             |    "subject": "ACCEPTÉ: Simple event @ Fri Feb 23, 2024 (bob@domain.tld)",
              |    "preview": "bob@domain.tld a accepté cette invitation.",
              |    "id": "$${json-unit.ignore}",
              |    "hasAttachment": true,

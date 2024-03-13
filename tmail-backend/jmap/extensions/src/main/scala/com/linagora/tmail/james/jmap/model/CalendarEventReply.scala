@@ -46,7 +46,7 @@ case class CalendarEventReplyRequest(accountId: AccountId,
   private def validateLanguage(supportedLanguage: Set[String]): Either[IllegalArgumentException, CalendarEventReplyRequest] =
     language match {
       case Some(value) if supportedLanguage.contains(value.value) => scala.Right(this)
-      case Some(_) => Left(new IllegalArgumentException("The language only supports " + supportedLanguage.mkString(", ")))
+      case Some(_) => Left(new IllegalArgumentException(s"The language only supports [${supportedLanguage.mkString(", ")}]"))
       case None => scala.Right(this)
     }
 }
