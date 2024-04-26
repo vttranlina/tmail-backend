@@ -23,11 +23,8 @@
 <listeners>
   <executeGroupListeners>true</executeGroupListeners>
 
-  <!-- Enable to populate JMAP EmailQueryView -->
-  <!--
   <listener>
-    <class>org.apache.james.jmap.event.PopulateEmailQueryViewListener</class>
+    <class>org.apache.james.rspamd.RspamdListener</class>
     <async>true</async>
   </listener>
-  -->
 </listeners>

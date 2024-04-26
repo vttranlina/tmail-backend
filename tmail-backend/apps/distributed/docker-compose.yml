@@ -3,6 +3,10 @@ version: '3'
 networks:
   emaily:
     driver: bridge
+    ipam:
+      driver: default
+      config:
+        - subnet: 173.18.0.0/16
 
 services:
   james:
@@ -15,11 +19,13 @@ services:
         condition: service_started
       rabbitmq:
         condition: service_started
-      redis:
+      redis1:
         condition: service_started
       s3:
         condition: service_started
-    image: linagora/tmail-backend-distributed
+      rspamd:
+        condition: service_healthy
+    image: linagora/tmail-backend-distributed:latest
     container_name: james
     hostname: james.local
     ports:
@@ -34,11 +40,15 @@ services:
     networks:
       - emaily
     volumes:
-      - ${RSA_PUBLICKEY_PATH}:/root/conf/jwt_publickey # Replace with absolute path to your RSA public key
-      - ${RSA_PRIVATEKEY_PATH}:/root/conf/jwt_privatekey # Replace with absolute path to your RSA private key
-      # Key generation:
-      # openssl genrsa -out jwt_privatekey 4096
-      # openssl rsa -in jwt_privatekey -pubout > jwt_publickey
+      - /home/tungtv/workplace/JAMES/tmail-backend/tmail-backend/deployment-tests/distributed/src/test/resources/james-conf/jwt_publickey:/root/conf/jwt_publickey # Replace with absolute path to your RSA public key
+      - /home/tungtv/workplace/JAMES/tmail-backend/tmail-backend/deployment-tests/distributed/src/test/resources/james-conf/jwt_privatekey:/root/conf/jwt_privatekey # Replace with absolute path to your RSA private key
+      - /home/tungtv/workplace/JAMES/tmail-backend/tmail-backend/apps/distributed/src/main/conf/mailetcontainer.xml:/root/conf/mailetcontainer.xml
+      - /home/tungtv/workplace/JAMES/tmail-backend/tmail-backend/apps/distributed/src/main/conf/queue.properties:/root/conf/queue.properties
+      - /home/tungtv/workplace/JAMES/tmail-backend/tmail-backend/apps/distributed/src/main/conf/healthcheck.properties:/root/conf/healthcheck.properties
+      - /home/tungtv/workplace/JAMES/tmail-backend/tmail-backend/apps/distributed/src/main/conf/rspamd.properties:/root/conf/rspamd.properties
+      - /home/tungtv/workplace/JAMES/tmail-backend/tmail-backend/apps/distributed/src/main/conf/listeners.xml:/root/conf/listeners.xml
+      - /home/tungtv/workplace/JAMES/tmail-backend/tmail-backend/apps/distributed/src/main/conf/redis.properties:/root/conf/redis.properties
+      - /home/tungtv/workplace/JAMES/tmail-backend/tmail-backend/apps/distributed/src/main/conf/extensions.properties:/root/conf/extensions.properties
 
   opensearch:
     image: opensearchproject/opensearch:2.1.0
@@ -88,8 +98,139 @@ services:
     networks:
       - emaily
 
-  redis:
-    image: redis:7.0.12
+  clamav:
+    image: clamav/clamav:1.1
     networks:
       - emaily
+
+  rspamd:
+    depends_on:
+      clamav:
+        condition: service_healthy
+      redis1:
+        condition: service_started
+    container_name: rspamd
+    image: a16bitsysop/rspamd:3.5-r7-alpine3.18.2-r0
+    environment:
+      - REDIS=redis1
+      - CLAMAV=clamav
+      - PASSWORD=admin
+    volumes:
+      - /home/tungtv/workplace/JAMES/tmail-backend/james-project/third-party/rspamd/sample-configuration/antivirus.conf:/etc/rspamd/override.d/antivirus.conf
+      - /home/tungtv/workplace/JAMES/tmail-backend/james-project/third-party/rspamd/sample-configuration/statistic.conf:/etc/rspamd/statistic.conf
+    ports:
+      - 11334:11334
+    networks:
+      - emaily
+
+# Redis cluster
+
+  redis1:
+    image: 'redis:latest'
+    container_name: redis1
+    ports:
+      - "6379"
+    depends_on:
+      - redis2
+      - redis3
+      - redis4
+      - redis5
+      - redis6
+    volumes:
+      - ./redis/redis.conf:/usr/local/etc/redis/redis.conf
+    command: [ "redis-server", "/usr/local/etc/redis/redis.conf" ]
+    networks:
+      emaily:
+        ipv4_address: 173.18.0.61
+
+  redis2:
+    image: 'redis:latest'
+    container_name: redis2
+    ports:
+      - "6379"
+    volumes:
+      - ./redis/redis.conf:/usr/local/etc/redis/redis.conf
+    command: [ "redis-server", "/usr/local/etc/redis/redis.conf" ]
+    networks:
+      emaily:
+        ipv4_address: 173.18.0.62
+
+  redis3:
+    image: 'redis:latest'
+    container_name: redis3
+    ports:
+      - "6379"
+    volumes:
+      - ./redis/redis.conf:/usr/local/etc/redis/redis.conf
+    command: [ "redis-server", "/usr/local/etc/redis/redis.conf" ]
+    networks:
+      emaily:
+        ipv4_address: 173.18.0.63
+
+  redis4:
+    image: 'redis:latest'
+    container_name: redis4
+    ports:
+      - "6379"
+    volumes:
+      - ./redis/redis.conf:/usr/local/etc/redis/redis.conf
+    command: [ "redis-server", "/usr/local/etc/redis/redis.conf" ]
+    networks:
+      emaily:
+        ipv4_address: 173.18.0.64
+
+  redis5:
+    image: 'redis:latest'
+    container_name: redis5
+    ports:
+      - "6379"
+    volumes:
+      - ./redis/redis.conf:/usr/local/etc/redis/redis.conf
+    command: [ "redis-server", "/usr/local/etc/redis/redis.conf" ]
+    networks:
+      emaily:
+        ipv4_address: 173.18.0.65
+
+  redis6:
+    image: 'redis:latest'
+    container_name: redis6
+    ports:
+      - "6379"
+    volumes:
+      - ./redis/redis.conf:/usr/local/etc/redis/redis.conf
+    command: [ "redis-server", "/usr/local/etc/redis/redis.conf" ]
+    networks:
+      emaily:
+        ipv4_address: 173.18.0.66
+
+  cluster_initiator:
+    container_name: cluster_initiator
+    image: redis:latest
+    command: /bin/sh -c "sleep 5 && \
+      echo 'yes' | redis-cli --cluster create \
+      redis1:6379 \
+      redis2:6379 \
+      redis3:6379 \
+      redis4:6379 \
+      redis5:6379 \
+      redis6:6379 \
+      --cluster-replicas 1"
+    depends_on:
+      - redis1
+    networks:
+      emaily:
+        ipv4_address: 173.18.0.8
+
+  redis_commander:
+    image: rediscommander/redis-commander:latest
+    container_name: redis_web
+    depends_on:
+      - redis1
+    environment:
+      REDIS_HOSTS: "local:redis1:6379,local:redis2:6379,local:redis3:6379,local:redis4:6379,local:redis5:6379,local:redis6:6379"
+    ports:
+      - "5000:8081"
+    networks:
+      emaily:
+        ipv4_address: 173.18.0.9
 

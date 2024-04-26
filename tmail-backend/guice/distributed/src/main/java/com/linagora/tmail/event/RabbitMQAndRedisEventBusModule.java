@@ -56,7 +56,9 @@ public class RabbitMQAndRedisEventBusModule extends AbstractModule {
     @Singleton
     private RedisConfiguration redisConfiguration(PropertiesProvider propertiesProvider) throws ConfigurationException, FileNotFoundException {
         try {
-            return RedisConfiguration.from(propertiesProvider.getConfiguration("redis"));
+            RedisConfiguration redis = RedisConfiguration.from(propertiesProvider.getConfiguration("redis"));
+            LOGGER.info("RedisConfiguration was initial with configuration:  {}", redis.simpleString());
+            return redis;
         } catch (FileNotFoundException e) {
             LOGGER.error("Missing `redis.properties` configuration file for Redis Event Bus keys usage.");
             throw e;

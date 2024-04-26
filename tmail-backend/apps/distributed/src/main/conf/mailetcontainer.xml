@@ -62,6 +62,16 @@
                 <matcher match="org.apache.james.jmap.mailet.SentByJmap"/>
             </matcher>
 
+            <!-- Local sender rate limiting -->
+            <mailet matcher="SenderIsLocal" class="PerSenderRateLimit">
+                <keyPrefix>senderLimitHour</keyPrefix>
+                <duration>1h</duration>
+                <recipients>8000</recipients>
+                <totalSize>2G</totalSize>
+                <onMatcherException>ignore</onMatcherException>
+                <onMailetException>ignore</onMailetException>
+            </mailet>
+
             <mailet match="All" class="RemoveMimeHeader">
                 <name>bcc</name>
                 <onMailetException>ignore</onMailetException>
@@ -85,6 +95,21 @@
         </processor>
 
         <processor state="local-delivery" enableJmx="true">
+            <!-- Local recipient rate limiting -->
+            <!--<mailet matcher="All" class="PerRecipientRateLimit">
+                <keyPrefix>recipientLimitDay</keyPrefix>
+                <duration>1d</duration>
+                <count>80000</count>
+                <size>4G</size>
+                <onMailetException>ignore</onMailetException>
+            </mailet>-->
+
+            <mailet match="All" class="org.apache.james.rspamd.RspamdScanner">
+                <rewriteSubject>true</rewriteSubject>
+                <virusProcessor>virus</virusProcessor>
+                <onMailetException>ignore</onMailetException>
+            </mailet>
+
             <mailet match="All" class="VacationMailet"/>
             <mailet match="All" class="Sieve"/>
             <mailet match="All" class="AddDeliveredToHeader"/>
@@ -126,6 +151,12 @@
             <mailet match="All" class="ToRepository">
                 <repositoryPath>cassandra://var/mail/relay-denied/</repositoryPath>
                 <notice>Warning: You are sending an e-mail to a remote server. You must be authenticated to perform such an operation</notice>
+            </mailet>
+        </processor>
+
+        <processor state="virus" enableJmx="false">
+            <mailet match="All" class="ToRepository">
+                <repositoryPath>cassandra://var/mail/virus/</repositoryPath>
             </mailet>
         </processor>
 
