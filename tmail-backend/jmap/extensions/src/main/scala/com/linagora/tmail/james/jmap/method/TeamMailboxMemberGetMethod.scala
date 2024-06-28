@@ -2,7 +2,7 @@ package com.linagora.tmail.james.jmap.method
 
 import com.linagora.tmail.james.jmap.json.{TeamMailboxMemberSerializer => Serializer}
 import com.linagora.tmail.james.jmap.method.CapabilityIdentifier.LINAGORA_TEAM_MAILBOXES
-import com.linagora.tmail.james.jmap.model.{TeamMailboxMemberDTO, TeamMailboxMemberGetRequest, TeamMailboxMemberGetResponse, TeamMailboxMemberGetResult, TeamMailboxMemberRoleDTO}
+import com.linagora.tmail.james.jmap.model.{TeamMailboxMemberDTO, TeamMailboxMemberGetRequest, TeamMailboxMemberGetResponse, TeamMailboxMemberRoleDTO}
 import com.linagora.tmail.team.{TeamMailbox, TeamMailboxRepository}
 import eu.timepit.refined.auto._
 import jakarta.inject.Inject
@@ -46,8 +46,11 @@ class TeamMailboxMemberGetMethod @Inject()(val teamMailboxRepository: TeamMailbo
       case None => getMembersTeamMailboxes(username, _ => true)
         .map(seq => TeamMailboxMemberGetResponse(request.accountId, seq, Seq.empty))
       case Some(ids) => getMembersTeamMailboxes(username, teamMailbox => ids.contains(teamMailbox.mailboxName.asString()))
-        .map(result => TeamMailboxMemberGetResponse(request.accountId, result, ids.diff(result.map(_.id).toSet).toSeq))
+        .map(result => TeamMailboxMemberGetResponse(request.accountId, result, findNotFoundMembers(ids, result)))
     }
+
+  private def findNotFoundMembers(idsRequest: Set[String], memberResults: Seq[TeamMailboxMemberDTO]): Seq[String] =
+    idsRequest.diff(memberResults.map(_.id).toSet).toSeq
 
   private def getMembersTeamMailboxes(username: Username, predicate: TeamMailbox => Boolean): SMono[Seq[TeamMailboxMemberDTO]] =
     SFlux.fromPublisher(teamMailboxRepository.listTeamMailboxes(username))
