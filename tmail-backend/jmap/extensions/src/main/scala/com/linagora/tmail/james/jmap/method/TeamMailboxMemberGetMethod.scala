@@ -2,7 +2,7 @@ package com.linagora.tmail.james.jmap.method
 
 import com.linagora.tmail.james.jmap.json.{TeamMailboxMemberSerializer => Serializer}
 import com.linagora.tmail.james.jmap.method.CapabilityIdentifier.LINAGORA_TEAM_MAILBOXES
-import com.linagora.tmail.james.jmap.model.{TeamMailboxMemberDTO, TeamMailboxMemberGetRequest, TeamMailboxMemberGetResponse, TeamMailboxMemberRoleDTO}
+import com.linagora.tmail.james.jmap.model.{TeamMailboxMemberDTO, TeamMailboxMemberGetRequest, TeamMailboxMemberGetResponse, TeamMailboxMemberGetResult, TeamMailboxMemberRoleDTO}
 import com.linagora.tmail.team.{TeamMailbox, TeamMailboxRepository}
 import eu.timepit.refined.auto._
 import jakarta.inject.Inject
@@ -41,31 +41,19 @@ class TeamMailboxMemberGetMethod @Inject()(val teamMailboxRepository: TeamMailbo
         methodCallId = invocation.invocation.methodCallId))
       .map(InvocationWithContext(_, invocation.processingContext))
 
-  private def getTeamMailboxMemberResponse(username: Username, request: TeamMailboxMemberGetRequest): SMono[TeamMailboxMemberGetResponse] = {
+  private def getTeamMailboxMemberResponse(username: Username, request: TeamMailboxMemberGetRequest): SMono[TeamMailboxMemberGetResponse] =
     request.ids match {
-      case None => getMembersOfAllTeamMailboxes(username, request.accountId)
-      case Some(ids) => getMembersOfSpecificTeamMailboxes(username, request.accountId, ids)
+      case None => getMembersTeamMailboxes(username, _ => true)
+        .map(seq => TeamMailboxMemberGetResponse(request.accountId, seq, Seq.empty))
+      case Some(ids) => getMembersTeamMailboxes(username, teamMailbox => ids.contains(teamMailbox.mailboxName.asString()))
+        .map(result => TeamMailboxMemberGetResponse(request.accountId, result, ids.diff(result.map(_.id).toSet).toSeq))
     }
-  }
 
-  private def getMembersOfAllTeamMailboxes(username: Username, accountId: AccountId): SMono[TeamMailboxMemberGetResponse] =
+  private def getMembersTeamMailboxes(username: Username, predicate: TeamMailbox => Boolean): SMono[Seq[TeamMailboxMemberDTO]] =
     SFlux.fromPublisher(teamMailboxRepository.listTeamMailboxes(username))
-      .flatMap(teamMailbox => getMembersOf(teamMailbox))
+      .filter(predicate)
+      .flatMap(getMembersOf)
       .collectSeq()
-      .map(seq => TeamMailboxMemberGetResponse(accountId, seq, Seq.empty))
-
-  private def getMembersOfSpecificTeamMailboxes(username: Username, accountId: AccountId, mailboxNames: Set[String]): SMono[TeamMailboxMemberGetResponse] = {
-    SFlux.fromPublisher(teamMailboxRepository.listTeamMailboxes(username))
-      .collectSeq()
-      .flatMap(teamMailboxes => {
-        val foundTeamMailboxes = teamMailboxes.filter(teamMailbox => mailboxNames.contains(teamMailbox.mailboxName.asString()))
-        val notFoundTeamMailboxNames = mailboxNames.diff(foundTeamMailboxes.map(teamMailbox => teamMailbox.mailboxName.asString()).toSet).toSeq
-        SFlux.fromIterable(foundTeamMailboxes)
-          .flatMap(teamMailbox => getMembersOf(teamMailbox))
-          .collectSeq()
-          .map(seq => TeamMailboxMemberGetResponse(accountId, seq, notFoundTeamMailboxNames));
-      })
-  }
 
   private def getMembersOf(teamMailbox: TeamMailbox): SMono[TeamMailboxMemberDTO] =
     SFlux(teamMailboxRepository.listMembers(teamMailbox))

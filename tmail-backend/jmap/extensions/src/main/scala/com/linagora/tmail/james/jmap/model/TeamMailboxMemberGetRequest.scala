@@ -14,3 +14,4 @@ case class TeamMailboxMemberDTO(id: String,
                                 members: Map[String, TeamMailboxMemberRoleDTO] = Map.empty)
 
 case class TeamMailboxMemberRoleDTO(role: String)
+
