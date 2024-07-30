@@ -66,9 +66,8 @@
         <maxmessagesize>0</maxmessagesize>
         <addressBracketsEnforcement>true</addressBracketsEnforcement>
         <smtpGreeting>Apache JAMES awesome SMTP Server</smtpGreeting>
-        <handlerchain>
+        <handlerchain coreHandlersPackage="com.linagora.tmail.smtp.TMailCmdHandlerLoader">
             <handler class="com.linagora.tmail.smtp.TMailValidRcptHandler"/>
-            <handler class="org.apache.james.smtpserver.CoreCmdHandlerLoader"/>
         </handlerchain>
         <gracefulShutdown>false</gracefulShutdown>
     </smtpserver>
@@ -90,13 +89,12 @@
         -->
         <authRequired>true</authRequired>
         <!-- Trust authenticated users -->
-        <verifyIdentity>false</verifyIdentity>
+        <verifyIdentity>true</verifyIdentity>
         <maxmessagesize>0</maxmessagesize>
         <addressBracketsEnforcement>true</addressBracketsEnforcement>
         <smtpGreeting>Apache JAMES awesome SMTP Server</smtpGreeting>
-        <handlerchain>
+        <handlerchain coreHandlersPackage="com.linagora.tmail.smtp.TMailCmdHandlerLoader">
             <handler class="com.linagora.tmail.smtp.TMailValidRcptHandler"/>
-            <handler class="org.apache.james.smtpserver.CoreCmdHandlerLoader"/>
         </handlerchain>
         <gracefulShutdown>false</gracefulShutdown>
     </smtpserver>
