@@ -1,0 +1,5 @@
+= TMail SMTP extensions
+
+These extensions include:
+
+- link:smtpAuthDelegationExtension.adoc[SMTP Auth Delegation Extension]
