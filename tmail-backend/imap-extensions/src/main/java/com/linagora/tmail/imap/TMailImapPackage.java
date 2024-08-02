@@ -5,12 +5,12 @@ import org.apache.james.modules.protocols.ImapPackage;
 import com.google.common.collect.ImmutableList;
 import com.google.inject.Inject;
 
-public class TmailImapPackage extends ImapPackage.Impl {
+public class TMailImapPackage extends ImapPackage.Impl {
 
-    static final ImapPackage AGGREGATE = ImapPackage.and(ImmutableList.of(new DefaultNoAuth(), new TmailImapLoginPackage()));
+    static final ImapPackage AGGREGATE = ImapPackage.and(ImmutableList.of(new DefaultNoAuth(), new TMailImapLoginPackage()));
 
     @Inject
-    public TmailImapPackage() {
+    public TMailImapPackage() {
         super(AGGREGATE.processors()
                 .stream().collect(ImmutableList.toImmutableList()),
             AGGREGATE.decoders()

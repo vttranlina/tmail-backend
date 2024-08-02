@@ -16,6 +16,6 @@
         <idleTimeIntervalUnit>SECONDS</idleTimeIntervalUnit>
         <enableIdle>true</enableIdle>
         <plainAuthDisallowed>false</plainAuthDisallowed>
-        <imapPackages>com.linagora.tmail.imap.TmailImapPackage</imapPackages>
+        <imapPackages>com.linagora.tmail.imap.TMailImapPackage</imapPackages>
     </imapserver>
 </imapservers>
