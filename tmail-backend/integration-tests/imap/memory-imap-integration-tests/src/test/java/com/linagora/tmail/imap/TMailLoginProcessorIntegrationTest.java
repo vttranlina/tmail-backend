@@ -8,6 +8,7 @@ import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.nio.charset.StandardCharsets;
+import java.util.concurrent.TimeUnit;
 
 import org.apache.james.GuiceJamesServer;
 import org.apache.james.JamesServerBuilder;
@@ -31,7 +32,7 @@ import com.linagora.tmail.encrypted.MailboxManagerClassProbe;
 import com.linagora.tmail.james.app.MemoryConfiguration;
 import com.linagora.tmail.james.app.MemoryServer;
 
-public class TmailImapLoginPackageTest {
+public class TMailLoginProcessorIntegrationTest {
 
     static final Username MINISTER = Username.of("minister@" + DOMAIN);
     static final Username SECRETARY = Username.of("secretary@" + DOMAIN);
