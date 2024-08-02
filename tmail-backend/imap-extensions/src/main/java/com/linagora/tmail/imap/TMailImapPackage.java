@@ -7,7 +7,7 @@ import com.google.inject.Inject;
 
 public class TMailImapPackage extends ImapPackage.Impl {
 
-    static final ImapPackage AGGREGATE = ImapPackage.and(ImmutableList.of(new DefaultNoAuth(), new TMailImapLoginPackage()));
+    static final ImapPackage AGGREGATE = ImapPackage.and(ImmutableList.of(new DefaultNoAuth(), new TMailImapAuthPackage()));
 
     @Inject
     public TMailImapPackage() {
