@@ -21,11 +21,10 @@ services:
     networks:
       - emaily
     volumes:
-      - $PWD/jwt_publickey:/root/conf/jwt_publickey
-      - $PWD/jwt_privatekey:/root/conf/jwt_privatekey
-      - $PWD/src/main/conf/smtpserver.xml:/root/conf/smtpserver.xml
-      - $PWD/src/main/conf/imapserver.xml:/root/conf/imapserver.xml
-      - ./target/imap-extensions-1.0.0-SNAPSHOT-jar-with-dependencies.jar:/root/extensions-jars/imap-extensions.jar
+      - /home/tungtv/workplace/1JAMES/tmail-backend/tmail-backend/deployment-tests/memory/src/test/resources/james-conf/jwt_publickey:/root/conf/jwt_publickey
+      - /home/tungtv/workplace/1JAMES/tmail-backend/tmail-backend/deployment-tests/memory/src/test/resources/james-conf/jwt_privatekey:/root/conf/jwt_privatekey
+      - ./conf/smtpserver.xml:/root/conf/smtpserver.xml
+      - ./conf/imapserver.xml:/root/conf/imapserver.xml
     healthcheck:
       test: [ "CMD-SHELL", "wget -S --spider http://localhost:8000/domains || exit 1" ]
       interval: 5s
