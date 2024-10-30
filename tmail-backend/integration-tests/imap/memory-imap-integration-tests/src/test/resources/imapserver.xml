@@ -22,7 +22,7 @@ under the License.
 <imapservers>
     <imapserver enabled="true">
         <jmxName>imapserver</jmxName>
-        <bind>0.0.0.0:0</bind>
+        <bind>0.0.0.0:1210</bind>
         <connectionBacklog>200</connectionBacklog>
         <tls socketTLS="false" startTLS="false">
             <keystore>classpath://keystore</keystore>
@@ -37,10 +37,11 @@ under the License.
         <customProperties>prop.b=anotherValue</customProperties>
         <gracefulShutdown>false</gracefulShutdown>
         <imapPackages>com.linagora.tmail.imap.TMailImapPackage</imapPackages>
+        <disabledCaps>ID</disabledCaps>
     </imapserver>
     <imapserver enabled="true">
         <jmxName>imapservers</jmxName>
-        <bind>0.0.0.0:0</bind>
+        <bind>0.0.0.0:1993</bind>
         <connectionBacklog>200</connectionBacklog>
         <tls socketTLS="true" startTLS="false">
             <keystore>classpath://keystore</keystore>
@@ -55,5 +56,6 @@ under the License.
         <customProperties>prop.b=baad</customProperties>
         <gracefulShutdown>false</gracefulShutdown>
         <imapPackages>com.linagora.tmail.imap.TMailImapPackage</imapPackages>
+        <disabledCaps>ID</disabledCaps>
     </imapserver>
 </imapservers>

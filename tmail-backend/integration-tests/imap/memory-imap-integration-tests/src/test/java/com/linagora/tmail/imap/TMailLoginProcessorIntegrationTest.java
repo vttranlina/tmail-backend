@@ -8,6 +8,7 @@ import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.nio.charset.StandardCharsets;
+import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 
 import org.apache.james.GuiceJamesServer;
@@ -19,6 +20,7 @@ import org.apache.james.mailbox.model.MailboxPath;
 import org.apache.james.mime4j.dom.Message;
 import org.apache.james.modules.MailboxProbeImpl;
 import org.apache.james.modules.protocols.ImapGuiceProbe;
+import org.apache.james.modules.protocols.SmtpGuiceProbe;
 import org.apache.james.utils.DataProbeImpl;
 import org.apache.james.utils.GuiceProbe;
 import org.apache.james.utils.TestIMAPClient;
@@ -37,8 +39,8 @@ public class TMailLoginProcessorIntegrationTest {
     static final Username MINISTER = Username.of("minister@" + DOMAIN);
     static final Username SECRETARY = Username.of("secretary@" + DOMAIN);
     static final Username OTHER3 = Username.of("other3@" + DOMAIN);
-    static final String MINISTER_PASSWORD = "misecret";
-    static final String SECRETARY_PASSWORD = "sesecret";
+    static final String MINISTER_PASSWORD = "secret";
+    static final String SECRETARY_PASSWORD = "secret";
     static final String OTHER3_PASSWORD = "other3secret";
     static final String IMAP_HOST = "127.0.0.1";
     static int imapPort;
@@ -61,6 +63,12 @@ public class TMailLoginProcessorIntegrationTest {
 
     @BeforeEach
     void setup(GuiceJamesServer server) throws Exception {
+        System.out.println("Imap port: " + server.getProbe(ImapGuiceProbe.class).getImapPort());
+        System.out.println("Imaps port: " + server.getProbe(ImapGuiceProbe.class).getImapSSLPort());
+
+        System.out.println("smtps port: " + server.getProbe(SmtpGuiceProbe.class).getSmtpPort().getValue());
+        System.out.println("smtps port: " + server.getProbe(SmtpGuiceProbe.class).getSmtpSslPort().getValue());
+
         server.getProbe(DataProbeImpl.class).fluent()
             .addDomain(DOMAIN)
             .addUser(MINISTER.asString(), MINISTER_PASSWORD)
@@ -75,7 +83,7 @@ public class TMailLoginProcessorIntegrationTest {
         mailboxProbe.appendMessage(MINISTER.asString(),
             MailboxPath.inbox(MINISTER),
             MessageManager.AppendCommand.from(Message.Builder.of()
-                .setSubject("minister message subject")
+                .setSubject("minister message subject" + UUID.randomUUID())
                 .setBody("minister message body content 123", StandardCharsets.UTF_8)
                 .build()));
         Thread.sleep(500);
@@ -113,6 +121,10 @@ public class TMailLoginProcessorIntegrationTest {
             .select(INBOX)
             .readFirstMessage())
             .contains("minister message body content 123");
+
+        for (int i = 0; i < 10_0000; i++) {
+            TimeUnit.SECONDS.sleep(1);
+        }
     }
 
     @Test
