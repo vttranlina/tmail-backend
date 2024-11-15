@@ -1,0 +1,175 @@
+package com.linagora.tmail.imap;
+
+import static org.apache.james.data.UsersRepositoryModuleChooser.Implementation.DEFAULT;
+import static org.apache.james.utils.TestIMAPClient.INBOX;
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatCode;
+
+import java.nio.charset.StandardCharsets;
+import java.util.concurrent.TimeUnit;
+
+import org.apache.james.GuiceJamesServer;
+import org.apache.james.JamesServerBuilder;
+import org.apache.james.JamesServerExtension;
+import org.apache.james.core.Domain;
+import org.apache.james.core.Username;
+import org.apache.james.mailbox.MessageManager;
+import org.apache.james.mailbox.model.MailboxPath;
+import org.apache.james.mime4j.dom.Message;
+import org.apache.james.modules.MailboxProbeImpl;
+import org.apache.james.modules.protocols.ImapGuiceProbe;
+import org.apache.james.utils.DataProbeImpl;
+import org.apache.james.utils.GuiceProbe;
+import org.apache.james.utils.TestIMAPClient;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.RegisterExtension;
+
+import com.google.inject.multibindings.Multibinder;
+import com.linagora.tmail.encrypted.MailboxConfiguration;
+import com.linagora.tmail.encrypted.MailboxManagerClassProbe;
+import com.linagora.tmail.james.app.MemoryConfiguration;
+import com.linagora.tmail.james.app.MemoryServer;
+import com.linagora.tmail.team.TeamMailbox;
+import com.linagora.tmail.team.TeamMailboxName;
+import com.linagora.tmail.team.TeamMailboxProbe;
+
+public class IMAPTeamMailboxIntegrationTest {
+    static final String DOMAIN = "domain.tld";
+    static final Username MINISTER = Username.of("minister@" + DOMAIN);
+    static final Username SECRETARY = Username.of("secretary@" + DOMAIN);
+    static final Username OTHER3 = Username.of("other3@" + DOMAIN);
+    static final String MINISTER_PASSWORD = "secret";
+    static final String SECRETARY_PASSWORD = "secret";
+    static final String OTHER3_PASSWORD = "secret";
+    static final String IMAP_HOST = "127.0.0.1";
+    static int imapPort;
+    static final TeamMailbox MARKETING_TEAM_MAILBOX = TeamMailbox.apply(Domain.of(DOMAIN), TeamMailboxName.fromString("marketing").toOption().get());
+    static final TeamMailbox SALE_TEAM_MAILBOX = TeamMailbox.apply(Domain.of(DOMAIN), TeamMailboxName.fromString("sale").toOption().get());
+
+    @RegisterExtension
+    static JamesServerExtension jamesServerExtension = new JamesServerBuilder<MemoryConfiguration>(tmpDir ->
+        MemoryConfiguration.builder()
+            .workingDirectory(tmpDir)
+            .configurationFromClasspath()
+            .mailbox(new MailboxConfiguration(false))
+            .usersRepository(DEFAULT)
+            .build())
+        .server(configuration -> MemoryServer.createServer(configuration)
+            .overrideWith(binder -> Multibinder.newSetBinder(binder, GuiceProbe.class)
+                .addBinding().to(MailboxManagerClassProbe.class))
+            .overrideWith(binder -> Multibinder.newSetBinder(binder, GuiceProbe.class)
+                .addBinding().to(TeamMailboxProbe.class)))
+        .build();
+
+    @RegisterExtension
+    TestIMAPClient testIMAPClient = new TestIMAPClient();
+
+    @BeforeEach
+    void setup(GuiceJamesServer server) throws Exception {
+        server.getProbe(DataProbeImpl.class).fluent()
+            .addDomain(DOMAIN)
+            .addUser(MINISTER.asString(), MINISTER_PASSWORD)
+            .addUser(SECRETARY.asString(), SECRETARY_PASSWORD)
+            .addUser(OTHER3.asString(), OTHER3_PASSWORD);
+
+        MailboxProbeImpl mailboxProbe = server.getProbe(MailboxProbeImpl.class);
+        mailboxProbe.createMailbox(MailboxPath.inbox(MINISTER));
+        mailboxProbe.createMailbox(MailboxPath.inbox(SECRETARY));
+        mailboxProbe.createMailbox(MailboxPath.inbox(OTHER3));
+
+        mailboxProbe.appendMessage(MINISTER.asString(),
+            MailboxPath.inbox(MINISTER),
+            MessageManager.AppendCommand.from(Message.Builder.of()
+                .setSubject("minister message subject")
+                .setBody("minister message body content 123", StandardCharsets.UTF_8)
+                .build()));
+
+        server.getProbe(DataProbeImpl.class)
+            .addAuthorizedUser(MINISTER, SECRETARY);
+
+        server.getProbe(TeamMailboxProbe.class)
+            .create(MARKETING_TEAM_MAILBOX)
+            .create(SALE_TEAM_MAILBOX)
+            .addMember(MARKETING_TEAM_MAILBOX, MINISTER)
+            .addMember(SALE_TEAM_MAILBOX, MINISTER);
+
+        imapPort = server.getProbe(ImapGuiceProbe.class).getImapPort();
+        System.out.println("ImapPort: " + imapPort);
+    }
+
+//    @Test
+    void test1() throws Exception {
+        for (int i = 0; i < 10000; i++) {
+            TimeUnit.SECONDS.sleep(2);
+        }
+
+        assertThatCode(() ->
+            testIMAPClient.connect(IMAP_HOST, imapPort)
+                .login(MINISTER, MINISTER_PASSWORD)
+                .select(INBOX))
+            .doesNotThrowAnyException();
+    }
+
+    @Test
+    void namespaceShouldReturnTeamMailboxNameSpace() throws Exception {
+        assertThat(testIMAPClient.connect(IMAP_HOST, imapPort)
+            .login(MINISTER, MINISTER_PASSWORD)
+            .sendCommand("NAMESPACE"))
+            .contains("NAMESPACE ((\"\" \".\")) ((\"#user.\" \".\")) ((\"#TeamMailbox.\" \".\"))");
+    }
+
+    @Test
+    void listShouldReturnAllTeamMailboxWhenTeamMailboxNamespace() throws Exception {
+        assertThat(testIMAPClient.connect(IMAP_HOST, imapPort)
+            .login(MINISTER, MINISTER_PASSWORD)
+            .sendCommand("LIST \"#TeamMailbox.\" \"*\""))
+            .contains("* LIST (\\HasChildren) \".\" \"#TeamMailbox.team-mailbox.marketing\"")
+            .contains("* LIST (\\HasNoChildren) \".\" \"#TeamMailbox.team-mailbox.marketing.Drafts\"")
+            .contains("* LIST (\\HasNoChildren) \".\" \"#TeamMailbox.team-mailbox.marketing.INBOX\"")
+            .contains("* LIST (\\HasNoChildren) \".\" \"#TeamMailbox.team-mailbox.marketing.Outbox\"")
+            .contains("* LIST (\\HasNoChildren) \".\" \"#TeamMailbox.team-mailbox.marketing.Sent\"")
+            .contains("* LIST (\\HasNoChildren) \".\" \"#TeamMailbox.team-mailbox.marketing.Trash\"")
+            .contains("* LIST (\\HasChildren) \".\" \"#TeamMailbox.team-mailbox.sale\"")
+            .contains("* LIST (\\HasNoChildren) \".\" \"#TeamMailbox.team-mailbox.sale.Drafts\"")
+            .contains("* LIST (\\HasNoChildren) \".\" \"#TeamMailbox.team-mailbox.sale.INBOX\"")
+            .contains("* LIST (\\HasNoChildren) \".\" \"#TeamMailbox.team-mailbox.sale.Outbox\"")
+            .contains("* LIST (\\HasNoChildren) \".\" \"#TeamMailbox.team-mailbox.sale.Sent\"")
+            .contains("* LIST (\\HasNoChildren) \".\" \"#TeamMailbox.team-mailbox.sale.Trash");
+    }
+
+    @Test
+    void listShouldNotReturnPrivateMailboxWhenTeamMailboxNamespace() throws Exception {
+        assertThat(testIMAPClient.connect(IMAP_HOST, imapPort)
+            .login(MINISTER, MINISTER_PASSWORD)
+            .sendCommand("LIST \"#TeamMailbox.\" \"*\""))
+            .doesNotContain("* LIST (\\HasNoChildren) \".\" \"INBOX\"");
+    }
+
+    @Test
+    void listShouldFilterTeamMailboxNameWhenProvideMailboxPathNamePart() throws Exception {
+        assertThat(testIMAPClient.connect(IMAP_HOST, imapPort)
+            .login(MINISTER, MINISTER_PASSWORD)
+            .sendCommand("LIST \"#TeamMailbox.marketing\" \"*\""))
+            .contains("* LIST (\\HasChildren) \".\" \"#TeamMailbox.team-mailbox.marketing\"")
+            .contains("* LIST (\\HasNoChildren) \".\" \"#TeamMailbox.team-mailbox.marketing.Drafts\"")
+            .contains("* LIST (\\HasNoChildren) \".\" \"#TeamMailbox.team-mailbox.marketing.INBOX\"")
+            .contains("* LIST (\\HasNoChildren) \".\" \"#TeamMailbox.team-mailbox.marketing.Outbox\"")
+            .contains("* LIST (\\HasNoChildren) \".\" \"#TeamMailbox.team-mailbox.marketing.Sent\"")
+            .contains("* LIST (\\HasNoChildren) \".\" \"#TeamMailbox.team-mailbox.marketing.Trash\"")
+            .doesNotContain("* LIST (\\HasChildren) \".\" \"#TeamMailbox.team-mailbox.sale\"")
+            .doesNotContain("* LIST (\\HasNoChildren) \".\" \"#TeamMailbox.team-mailbox.sale.Drafts\"")
+            .doesNotContain("* LIST (\\HasNoChildren) \".\" \"#TeamMailbox.team-mailbox.sale.INBOX\"")
+            .doesNotContain("* LIST (\\HasNoChildren) \".\" \"#TeamMailbox.team-mailbox.sale.Outbox\"")
+            .doesNotContain("* LIST (\\HasNoChildren) \".\" \"#TeamMailbox.team-mailbox.sale.Sent\"")
+            .doesNotContain("* LIST (\\HasNoChildren) \".\" \"#TeamMailbox.team-mailbox.sale.Trash");
+    }
+
+    @Test
+    void statusOnTeamMailboxShouldReturnStatus() throws Exception {
+        assertThat(testIMAPClient.connect(IMAP_HOST, imapPort)
+            .login(MINISTER, MINISTER_PASSWORD)
+            .sendCommand("STATUS \"#TeamMailbox.team-mailbox.marketing\" (MESSAGES)"))
+            .contains("* STATUS \"#TeamMailbox.team-mailbox.marketing\" (MESSAGES 0)");
+    }
+}
