@@ -1,11 +1,13 @@
 package com.linagora.tmail.imap;
 
+import static io.vavr.API.Set;
 import static org.apache.james.data.UsersRepositoryModuleChooser.Implementation.DEFAULT;
 import static org.apache.james.utils.TestIMAPClient.INBOX;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 
 import java.nio.charset.StandardCharsets;
+import java.util.List;
 import java.util.concurrent.TimeUnit;
 
 import org.apache.james.GuiceJamesServer;
@@ -14,10 +16,13 @@ import org.apache.james.JamesServerExtension;
 import org.apache.james.core.Domain;
 import org.apache.james.core.Username;
 import org.apache.james.mailbox.MessageManager;
+import org.apache.james.mailbox.model.MailboxACL;
 import org.apache.james.mailbox.model.MailboxPath;
 import org.apache.james.mime4j.dom.Message;
+import org.apache.james.modules.ACLProbeImpl;
 import org.apache.james.modules.MailboxProbeImpl;
 import org.apache.james.modules.protocols.ImapGuiceProbe;
+import org.apache.james.modules.protocols.SmtpGuiceProbe;
 import org.apache.james.utils.DataProbeImpl;
 import org.apache.james.utils.GuiceProbe;
 import org.apache.james.utils.TestIMAPClient;
@@ -75,8 +80,11 @@ public class IMAPTeamMailboxIntegrationTest {
 
         MailboxProbeImpl mailboxProbe = server.getProbe(MailboxProbeImpl.class);
         mailboxProbe.createMailbox(MailboxPath.inbox(MINISTER));
+        mailboxProbe.createMailbox(MailboxPath.forUser(MINISTER, "Sent"));
+        mailboxProbe.createMailbox(MailboxPath.forUser(MINISTER, "Outbox"));
         mailboxProbe.createMailbox(MailboxPath.inbox(SECRETARY));
         mailboxProbe.createMailbox(MailboxPath.inbox(OTHER3));
+
 
         mailboxProbe.appendMessage(MINISTER.asString(),
             MailboxPath.inbox(MINISTER),
@@ -94,11 +102,22 @@ public class IMAPTeamMailboxIntegrationTest {
             .addMember(MARKETING_TEAM_MAILBOX, MINISTER)
             .addMember(SALE_TEAM_MAILBOX, MINISTER);
 
+        server.getProbe(ACLProbeImpl.class)
+            .replaceRights(MailboxPath.inbox(OTHER3), MINISTER.asString(), MailboxACL.Rfc4314Rights.of(List.of(MailboxACL.Right.Administer, MailboxACL.Right.Lookup,
+                MailboxACL.Right.Read)));
+
+        mailboxProbe.appendMessage(MINISTER.asString(), MARKETING_TEAM_MAILBOX.mailboxPath("INBOX"),
+            MessageManager.AppendCommand.from(Message.Builder.of()
+                .setSubject("Mail in marketing team mailbox")
+                .setBody("This is content of teammailbox", StandardCharsets.UTF_8)
+                .build()));
+
         imapPort = server.getProbe(ImapGuiceProbe.class).getImapPort();
         System.out.println("ImapPort: " + imapPort);
+        System.out.println("SMTPPort: " + server.getProbe(SmtpGuiceProbe.class).getSmtpPort().getValue());
     }
 
-//    @Test
+    @Test
     void test1() throws Exception {
         for (int i = 0; i < 10000; i++) {
             TimeUnit.SECONDS.sleep(2);

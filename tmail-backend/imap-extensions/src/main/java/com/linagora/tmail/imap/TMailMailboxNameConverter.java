@@ -97,15 +97,7 @@ public class TMailMailboxNameConverter implements PathConverter {
 
         } else if (namespace.equalsIgnoreCase("#TeamMailbox")) {
             Username user = Username.from(TeamMailbox.TEAM_MAILBOX_LOCAL_PART(), session.getUser().getDomainPart().map(Domain::asString));
-
-            Function<List<String>, Integer> getMailboxNameIndex = parts -> {
-                if (parts.contains(TeamMailbox.TEAM_MAILBOX_LOCAL_PART())) {
-                    return 2;
-                }
-                return 1;
-            };
-
-            String mailboxName = Joiner.on(session.getPathDelimiter()).join(Iterables.skip(mailboxPathParts, getMailboxNameIndex.apply(mailboxPathParts)));
+            String mailboxName = Joiner.on(session.getPathDelimiter()).join(Iterables.skip(mailboxPathParts, 1));
             return new MailboxPath(TeamMailboxNameSpace.TEAM_MAILBOX_NAMESPACE(), user, sanitizeMailboxName(mailboxName));
         } else {
             throw new UnsupportedOperationException("Namespace not supported: " + namespace);
@@ -136,11 +128,12 @@ public class TMailMailboxNameConverter implements PathConverter {
         }
         if (mailboxPath.getUser() != null) {
             if (!mailboxPath.belongsTo(session)) {
-                if (!sb.isEmpty()) {
-                    sb.append(session.getPathDelimiter());
+                if (!mailboxPath.getUser().getLocalPart().equalsIgnoreCase(TeamMailbox.TEAM_MAILBOX_LOCAL_PART())) {
+                    if (!sb.isEmpty()) {
+                        sb.append(session.getPathDelimiter());
+                    }
+                    sb.append(USERNAME_ESCAPER.escape(mailboxPath.getUser().getLocalPart()));
                 }
-
-                sb.append(USERNAME_ESCAPER.escape(mailboxPath.getUser().getLocalPart()));
             }
         }
         if (mailboxPath.getName() != null && !mailboxPath.getName().isEmpty()) {
@@ -167,6 +160,24 @@ public class TMailMailboxNameConverter implements PathConverter {
             if (mailboxName.equals("*")) {
                 return MailboxQuery.builder()
                     .matchesAllMailboxNames()
+                    .build();
+            } else if (mailboxName.startsWith("#user.")) {
+                MailboxPath basePath = computeBasePath(session, "#user");
+                return MailboxQuery.builder()
+                    .namespace(MailboxConstants.USER_NAMESPACE)
+                    .expression(new PrefixedRegex(
+                        basePath.getName(),
+                        mailboxName.replace("#user.", ""),
+                        mailboxSession.getPathDelimiter()))
+                    .build();
+            } else if (mailboxName.equals("#TeamMailbox.")) {
+                MailboxPath basePath = computeBasePath(session, "#TeamMailbox");
+                return MailboxQuery.builder()
+                    .namespace(TeamMailboxNameSpace.TEAM_MAILBOX_NAMESPACE())
+                    .expression(new PrefixedRegex(
+                        basePath.getName(),
+                        mailboxName.replace("#TeamMailbox.", ""),
+                        mailboxSession.getPathDelimiter()))
                     .build();
             }
             return MailboxQuery.builder()
