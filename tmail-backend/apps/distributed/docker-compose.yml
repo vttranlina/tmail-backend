@@ -6,24 +6,10 @@ networks:
 
 services:
   tmail-backend:
-    depends_on:
-      cassandra:
-        condition: service_healthy
-      opensearch:
-        condition: service_started
-      tika:
-        condition: service_started
-      rabbitmq:
-        condition: service_started
-      redis:
-        condition: service_started
-      s3:
-        condition: service_started
-    image: linagora/tmail-backend-distributed
+    image: linagora/tmail-backend-memory:latest
     container_name: tmail-backend
     hostname: tmail-backend.local
     ports:
-      - "80:80"
       - "25:25"
       - "110:110"
       - "143:143"
@@ -31,22 +17,15 @@ services:
       - "587:587"
       - "993:993"
       - "8000:8000"
+      - "4000:4000"
     networks:
       - emaily
+    environment:
+      - JAVA_TOOL_OPTIONS=-javaagent:/root/glowroot/glowroot.jar
     volumes:
-      - ${RSA_PUBLICKEY_PATH}:/root/conf/jwt_publickey # Replace with absolute path to your RSA public key
-      - ${RSA_PRIVATEKEY_PATH}:/root/conf/jwt_privatekey # Replace with absolute path to your RSA private key
-      - ./docker-configuration/redis.properties:/root/conf/redis.properties # Replace with absolute path to your RSA private key
-      # Key generation:
-      # openssl genrsa -out jwt_privatekey 4096
-      # openssl rsa -in jwt_privatekey -pubout > jwt_publickey
-    restart: on-failure
-    healthcheck:
-      test: [ "CMD-SHELL", "curl -f -s -o /dev/null 'http://localhost:8000/healthcheck?check=IMAPHealthCheck&check=Cassandra%20backend&strict'" ]
-      interval: 60s
-      timeout: 30s
-      retries: 2
-      start_period: 60s # require upper Docker v25
+      - /home/tungtv/workplace/1JAMES/tmail-backend/tmail-backend/plugins/mail-reporting/sample_conf/jwt_publickey:/root/conf/jwt_publickey # Replace with absolute path to your RSA public key
+      - /home/tungtv/workplace/1JAMES/tmail-backend/tmail-backend/plugins/mail-reporting/sample_conf/jwt_privatekey:/root/conf/jwt_privatekey # Replace with absolute path to your RSA private key
+
 
   monitor-tmail-backend:
     image: docker:27-cli
